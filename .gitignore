@@ -1,0 +1,41 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+logs/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+docker-data/
+postgres-data/
+redis-data/
+grafana-data/
+prometheus-data/
+jaeger-data/
+consul-data/
+
+# Config files (if sensitive)
+config/*.yml
+!config/*.example.yml
+
+# Task runner
+.task
+.task/*
+
+# Temporary files
+*.tmp
+*.temp

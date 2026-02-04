@@ -1,0 +1,219 @@
+version: "3.8"
+
+# Main infrastructure services for Minisource microservices
+# Usage: 
+#   cp .env.example .env
+#   docker compose up -d
+
+services:
+  # ===========================================
+  # PostgreSQL Database
+  # ===========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: minisource-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_MULTIPLE_DATABASES: auth_db,notifier_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # Redis Cache
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: minisource-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # OpenTelemetry Collector
+  # ===========================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: minisource-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics exposed by the collector
+      - "8889:8889"   # Prometheus exporter metrics
+      - "13133:13133" # Health check extension
+    depends_on:
+      - jaeger
+      - prometheus
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # Jaeger - Distributed Tracing
+  # ===========================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    container_name: minisource-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+    volumes:
+      - jaeger_data:/badger
+    ports:
+      - "5775:5775/udp"   # Accept zipkin.thrift over compact thrift protocol
+      - "6831:6831/udp"   # Accept jaeger.thrift over compact thrift protocol
+      - "6832:6832/udp"   # Accept jaeger.thrift over binary thrift protocol
+      - "5778:5778"       # Serve configs
+      - "16686:16686"     # Jaeger UI
+      - "14250:14250"     # Accept model.proto
+      - "14268:14268"     # Accept jaeger.thrift directly from clients
+      - "14269:14269"     # Admin port: health check
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:14269/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # Prometheus - Metrics
+  # ===========================================
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: minisource-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # Grafana - Visualization
+  # ===========================================
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: minisource-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # Loki - Log Aggregation
+  # ===========================================
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: minisource-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./config/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-network
+
+  # ===========================================
+  # Promtail - Log Collector
+  # ===========================================
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: minisource-promtail
+    restart: unless-stopped
+    volumes:
+      - ./config/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    depends_on:
+      - loki
+    networks:
+      - minisource-network
+
+networks:
+  minisource-network:
+    driver: bridge
+    name: minisource-network
+
+volumes:
+  postgres_data:
+    name: minisource-postgres-data
+  redis_data:
+    name: minisource-redis-data
+  jaeger_data:
+    name: minisource-jaeger-data
+  prometheus_data:
+    name: minisource-prometheus-data
+  grafana_data:
+    name: minisource-grafana-data
+  loki_data:
+    name: minisource-loki-data

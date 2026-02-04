@@ -1,0 +1,111 @@
+# Minisource Infrastructure - Development Docker Compose
+# Minimal setup for local development - databases only
+# Usage: docker compose -f docker-compose.dev.yml up -d
+
+services:
+  # ===========================================
+  # PostgreSQL Database (Shared for all services in dev)
+  # ===========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: minisource-dev-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_MULTIPLE_DATABASES: auth_db,notifier_db
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./scripts/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-dev
+
+  # ===========================================
+  # Redis Cache (Shared for all services in dev)
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: minisource-dev-redis
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxmemory 512mb 
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - minisource-dev
+
+  # ===========================================
+  # Adminer - Database Management UI
+  # ===========================================
+  adminer:
+    image: adminer:latest
+    container_name: minisource-dev-adminer
+    ports:
+      - "8080:8080"
+    networks:
+      - minisource-dev
+    depends_on:
+      - postgres
+    profiles:
+      - tools
+
+  # ===========================================
+  # Redis Commander - Redis Management UI
+  # ===========================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: minisource-dev-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    networks:
+      - minisource-dev
+    depends_on:
+      - redis
+    profiles:
+      - tools
+
+  # ===========================================
+  # MailHog - Email Testing
+  # ===========================================
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: minisource-dev-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - minisource-dev
+    profiles:
+      - tools
+
+volumes:
+  postgres_dev_data:
+    name: minisource-dev-postgres-data
+  redis_dev_data:
+    name: minisource-dev-redis-data
+
+networks:
+  minisource-dev:
+    driver: bridge
+    name: minisource-dev
