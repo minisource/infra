@@ -66,10 +66,6 @@ exporters:
   # Export to Loki for logs
   loki:
     endpoint: http://loki:3100/loki/api/v1/push
-    labels:
-      attributes:
-        service.name: "service_name"
-        service.namespace: "service_namespace"
 
 extensions:
   health_check:

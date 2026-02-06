@@ -1,0 +1,16 @@
+# Development environment configuration
+# Copy this file to terraform.tfvars and fill in your values
+
+# Container registry
+registry_url = "ghcr.io/minisource"
+image_tag    = "latest"
+
+# Database passwords (change these in production!)
+postgres_auth_password      = "auth_dev_password"
+postgres_log_password       = "log_dev_password"
+postgres_notifier_password  = "notifier_dev_password"
+postgres_scheduler_password = "scheduler_dev_password"
+postgres_storage_password   = "storage_dev_password"
+
+# Security
+jwt_secret = "your-jwt-secret-change-in-production"
