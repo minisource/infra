@@ -27,8 +27,10 @@ cd infra
 cp .env.dev .env
 docker compose -f docker-compose.dev.yml up -d
 
-# Optional: Include dev tools (Adminer, Redis Commander, MailHog)
+# Optional: Include dev tools (Adminer, Redis Commander, MailHog, MinIO)
 docker compose -f docker-compose.dev.yml --profile tools up -d
+# Or only email + object storage:
+docker compose -f docker-compose.dev.yml --profile tools up -d mailhog minio minio-setup
 ```
 
 Then run each service locally:
@@ -102,11 +104,31 @@ service/
 
 ### Production (docker-compose.prod.yml)
 - Full application stack
+- Pre-built images from [Docker Hub (`minisource`)](https://hub.docker.com/orgs/minisource/repositories)
 - **No exposed database ports** (security)
 - Internal network for database isolation
 - Resource limits configured
 - Security options enabled
 - JSON file logging with rotation
+
+```bash
+# Pull the latest image and start production stack
+export TAG=latest
+docker compose -f docker-compose.prod.yml up -d
+```
+
+## CI/CD (GitHub Actions → Docker Hub)
+
+Each service repository builds a Docker image on push/PR and pushes to Docker Hub after a successful build on the default branch (`main` or `master`).
+
+Configure these secrets in **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|--------|-------------|
+| `DOCKERHUB_USERNAME` | Docker Hub username or organization |
+| `DOCKERHUB_TOKEN` | Docker Hub access token |
+
+Published image format: `minisource/<service>:latest` and `minisource/<service>:<short-sha>`.
 
 ## Security Best Practices
 

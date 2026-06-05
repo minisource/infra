@@ -7,7 +7,7 @@ services:
   # PostgreSQL Database (Shared for all services in dev)
   # ===========================================
   postgres:
-    image: postgres:16-alpine
+    image: docker.arvancloud.ir/library/postgres:16-alpine
     container_name: minisource-dev-postgres
     restart: unless-stopped
     env_file:
@@ -33,7 +33,7 @@ services:
   # Redis Cache (Shared for all services in dev)
   # ===========================================
   redis:
-    image: redis:7-alpine
+    image: docker.arvancloud.ir/library/redis:7-alpine
     container_name: minisource-dev-redis
     restart: unless-stopped
     command: >
@@ -57,7 +57,7 @@ services:
   # Adminer - Database Management UI
   # ===========================================
   adminer:
-    image: adminer:latest
+    image: docker.arvancloud.ir/library/adminer:latest
     container_name: minisource-dev-adminer
     ports:
       - "8080:8080"
@@ -72,7 +72,7 @@ services:
   # Redis Commander - Redis Management UI
   # ===========================================
   redis-commander:
-    image: rediscommander/redis-commander:latest
+    image: docker.arvancloud.ir/rediscommander/redis-commander:latest
     container_name: minisource-dev-redis-commander
     environment:
       REDIS_HOSTS: local:redis:6379
@@ -89,11 +89,56 @@ services:
   # MailHog - Email Testing
   # ===========================================
   mailhog:
-    image: mailhog/mailhog:latest
+    image: docker.arvancloud.ir/mailhog/mailhog:latest
     container_name: minisource-dev-mailhog
     ports:
       - "1025:1025"  # SMTP
       - "8025:8025"  # Web UI
+    networks:
+      - minisource-dev
+    profiles:
+      - tools
+
+  # ===========================================
+  # MinIO - S3-compatible object storage (dev)
+  # Console on 9005 to avoid conflict with Auth (:9001)
+  # ===========================================
+  minio:
+    image: docker.arvancloud.ir/minio/minio:latest
+    container_name: minisource-dev-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_dev_data:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9005}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - minisource-dev
+    profiles:
+      - tools
+
+  minio-setup:
+    image: docker.arvancloud.ir/minio/mc:latest
+    container_name: minisource-dev-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc mb myminio/storage --ignore-existing;
+      mc mb myminio/storage-thumbnails --ignore-existing;
+      echo 'MinIO buckets ready';
+      exit 0;
+      "
     networks:
       - minisource-dev
     profiles:
@@ -104,6 +149,8 @@ volumes:
     name: minisource-dev-postgres-data
   redis_dev_data:
     name: minisource-dev-redis-data
+  minio_dev_data:
+    name: minisource-dev-minio-data
 
 networks:
   minisource-dev:
